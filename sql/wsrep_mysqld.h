@@ -102,6 +102,9 @@ extern my_bool     wsrep_restart_slave_activated;
 extern my_bool     wsrep_slave_FK_checks;
 extern my_bool     wsrep_slave_UK_checks;
 
+extern const char* pxc_encrypt_transit_path;
+extern const char* pxc_default_wsrep_provider_options;
+
 enum enum_wsrep_reject_types {
   WSREP_REJECT_NONE,    /* nothing rejected */
   WSREP_REJECT_ALL,     /* reject all queries, with UNKNOWN_COMMAND error */
@@ -347,4 +350,7 @@ bool wsrep_stmt_rollback_is_safe(THD* thd);
 void wsrep_init_sidno(const wsrep_uuid_t&);
 bool wsrep_node_is_donor();
 bool wsrep_node_is_synced();
+
+bool pxc_encrypt_transit_init();
+
 #endif /* WSREP_MYSQLD_H */

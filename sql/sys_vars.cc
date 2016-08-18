@@ -6209,6 +6209,12 @@ static Sys_var_enum Sys_pxc_strict_mode (
        NO_MUTEX_GUARD, NOT_IN_BINLOG, ON_CHECK(pxc_strict_mode_check),
        ON_UPDATE(0));
 
+static Sys_var_charptr Sys_pxc_encrypt_transit (
+       "pxc_encrypt_transit", "PXC encryption package",
+       READ_ONLY GLOBAL_VAR(pxc_encrypt_transit_path),
+       CMD_LINE(REQUIRED_ARG, OPT_PXC_ENCRYPT_TRANSIT),
+       IN_FS_CHARSET, DEFAULT(""));
+
 #endif /* WITH_WSREP */
 
 static bool fix_host_cache_size(sys_var *, THD *, enum_var_type)

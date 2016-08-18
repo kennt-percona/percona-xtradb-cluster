@@ -37,6 +37,9 @@ const  char* wsrep_node_incoming_address = 0;
 const  char* wsrep_start_position   = 0;
 ulong   wsrep_reject_queries;
 
+const  char* pxc_encrypt_transit_path = 0;
+const  char* pxc_default_wsrep_provider_options = 0;
+
 int wsrep_init_vars()
 {
   wsrep_provider        = my_strdup(PSI_NOT_INSTRUMENTED,
@@ -51,6 +54,8 @@ int wsrep_init_vars()
                                          WSREP_NODE_INCOMING_AUTO, MYF(MY_WME));
   wsrep_start_position  = my_strdup(PSI_NOT_INSTRUMENTED,
                                     WSREP_START_POSITION_ZERO, MYF(MY_WME));
+
+  pxc_encrypt_transit_path = my_strdup(PSI_NOT_INSTRUMENTED, "", MYF(MY_WME));
 
   global_system_variables.binlog_format=BINLOG_FORMAT_ROW;
   return 0;

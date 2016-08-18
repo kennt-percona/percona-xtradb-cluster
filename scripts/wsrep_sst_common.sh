@@ -20,11 +20,13 @@ set -u
 
 WSREP_SST_OPT_BYPASS=0
 WSREP_SST_OPT_BINLOG=""
+WSREP_SST_OPT_CONF=""
 WSREP_SST_OPT_CONF_SUFFIX=""
 WSREP_SST_OPT_DATA=""
 WSREP_SST_OPT_AUTH=${WSREP_SST_OPT_AUTH:-}
 WSREP_SST_OPT_USER=${WSREP_SST_OPT_USER:-}
 WSREP_SST_OPT_PSWD=${WSREP_SST_OPT_PSWD:-}
+WSREP_SST_OPT_ENCRYPT_TRANSIT_PATH=${WSREP_SST_OPT_ENCRYPT_TRANSIT_PATH:-}
 
 while [ $# -gt 0 ]; do
 case "$1" in
@@ -87,6 +89,10 @@ case "$1" in
         WSREP_SST_OPT_BINLOG="$2"
         shift
         ;;
+    '--encrypt-transit-path')
+        WSREP_SST_OPT_ENCRYPT_TRANSIT_PATH="$2"
+        shift
+        ;;
     *) # must be command
        # usage
        # exit 1
@@ -106,12 +112,16 @@ CLIENT_DIR="$SCRIPTS_DIR/../client"
 
 if [ -x "$CLIENT_DIR/mysql" ]; then
     MYSQL_CLIENT="$CLIENT_DIR/mysql"
+elif [ -x "$SCRIPTS_DIR/mysql" ]; then
+    MYSQL_CLIENT="$SCRIPTS_DIR/mysql"
 else
     MYSQL_CLIENT=$(which mysql)
 fi
 
 if [ -x "$CLIENT_DIR/mysqldump" ]; then
     MYSQLDUMP="$CLIENT_DIR/mysqldump"
+elif [ -x "$SCRIPTS_DIR/mysqldump" ]; then
+    MYSQLDUMP="$SCRIPTS_DIR/mysqldump"
 else
     MYSQLDUMP=$(which mysqldump)
 fi
@@ -120,6 +130,8 @@ if [ -x "$SCRIPTS_DIR/my_print_defaults" ]; then
     MY_PRINT_DEFAULTS="$SCRIPTS_DIR/my_print_defaults"
 elif [ -x "$EXTRA_DIR/my_print_defaults" ]; then
     MY_PRINT_DEFAULTS="$EXTRA_DIR/my_print_defaults"
+elif [ -x "$SCRIPTS_DIR/my_print_defaults" ]; then
+    MY_PRINT_DEFAULTS="$SCRIPTS_DIR/my_print_defaults"
 else
     MY_PRINT_DEFAULTS=$(which my_print_defaults)
 fi
@@ -130,7 +142,7 @@ wsrep_auth_not_set()
 }
 
 # For Bug:1200727
-if $MY_PRINT_DEFAULTS -c $WSREP_SST_OPT_CONF sst | grep -q "wsrep_sst_auth"
+if $MY_PRINT_DEFAULTS -c '${WSREP_SST_OPT_CONF}' sst | grep -q "wsrep_sst_auth"
 then
     if wsrep_auth_not_set
     then

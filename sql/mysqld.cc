@@ -3501,6 +3501,8 @@ int init_common_variables()
     global_system_variables.auto_increment_increment;
   global_system_variables.saved_auto_increment_offset=
     global_system_variables.auto_increment_offset;
+
+
 #endif /* WITH_WSREP */
 
   update_parser_max_mem_size();
@@ -4708,6 +4710,12 @@ a file name for --log-bin-index option", opt_binlog_index_name);
       else
       {
         WSREP_ERROR("Could not append %s/bin to PATH", mysql_home);
+      }
+
+      if (pxc_encrypt_transit_path && pxc_encrypt_transit_path[0])
+      {
+        if (!pxc_encrypt_transit_init())
+          unireg_abort(1);
       }
 
       if (wsrep_before_SE())

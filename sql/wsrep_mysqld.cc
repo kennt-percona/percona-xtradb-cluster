@@ -37,6 +37,7 @@
 #include "pthread.h"
 #include "mysql/psi/mysql_file.h"
 #endif /* HAVE_PSI_INTERFACE */
+#include "my_default.h"
 
 wsrep_t *wsrep                  = NULL;
 my_bool wsrep_emulate_bin_log   = FALSE; // activating parts of binlog interface
@@ -1098,8 +1099,26 @@ int wsrep_init()
   wsrep_args.node_name       = (wsrep_node_name) ? wsrep_node_name : "";
   wsrep_args.node_address    = node_addr;
   wsrep_args.node_incoming   = inc_addr;
-  wsrep_args.options         = (wsrep_provider_options) ?
-                                wsrep_provider_options : "";
+
+  const char* provider_options = wsrep_provider_options;
+  char   buffer[2048];
+  if (pxc_default_wsrep_provider_options)
+  {
+    if (provider_options == 0 || *provider_options == 0)
+    {
+      provider_options = pxc_default_wsrep_provider_options;
+    }
+    else
+    {
+      my_snprintf(buffer, sizeof(buffer), "%s;%s",
+                                          pxc_default_wsrep_provider_options,
+                                          wsrep_provider_options);
+      provider_options = buffer;
+    }
+  }
+  WSREP_INFO("wsrep_provider_options: %s", provider_options);
+  wsrep_args.options         = (provider_options) ? provider_options : "";
+
   wsrep_args.proto_ver       = wsrep_max_protocol_version;
 
   wsrep_args.state_id        = &state_id;
@@ -2082,4 +2101,465 @@ bool wsrep_node_is_donor()
 bool wsrep_node_is_synced()
 {
   return (WSREP_ON) ? (local_status.get() == WSREP_MEMBER_SYNCED) : false;
+}
+
+
+// Options for the wsrep_pxc_encrypt_transit script
+#define PXC_ENCRYPT_TRANSIT_OPT_PATH    "--encrypt-transit-path"
+#define PXC_ENCRYPT_TRANSIT_OPT_PARENT  "--parent"
+
+struct PxcEncryptTransitOption
+{
+  // name and param_name are assigned to point to string literals
+  const char* name;         // name in config file
+  const char* param_name;   // used for creating wsrep_provider_options string
+
+  // value is dynamic, to free up call clear_all_pxc_options()
+  char*       value;
+
+  //$TODO (kennt) : properly define the available flags (in an enum?)
+  unsigned int  flags;
+};
+
+struct PxcEncryptTransitOption  ssl_options_group[] =
+{
+  { "version", 0, 0, 0 },
+  { "ca",     "socket.ssl_ca", 0, 1 },
+  { "cert",   "socket.ssl_cert", 0, 1 },
+  { "key",    "socket.ssl_key", 0, 1 },
+  { 0, 0, 0, 0 }
+};
+
+struct PxcEncryptTransitOption galera_options_group[] =
+{
+  { "ca",     "socket.ssl_ca", 0, 1 },
+  { "cert",   "socket.ssl_cert", 0, 1 },
+  { "key",    "socket.ssl_key", 0, 1 },
+  { "cipher", "socket.ssl_cipher", 0, 0 },
+  { "compression", "socket.ssl_compression", 0, 0 },
+  { "password_file", "socket.ssl_password_file", 0, 1 },
+  { 0, 0, 0, 0 }
+};
+
+struct PxcEncryptTransitOption sst_options_group[] =
+{
+  { "ca", 0, 0, 1 },
+  { "cert", 0, 0, 1 },
+  { "key", 0, 0, 1 },
+  { 0, 0, 0, 0 }
+};
+
+static void clear_pxc_options(struct PxcEncryptTransitOption *options_group)
+{
+  struct PxcEncryptTransitOption* option = options_group;
+  while (option->name)
+  {
+    free(option->value);
+    option->value = NullS;
+    option++;
+  }
+}
+
+static void clear_all_pxc_options()
+{
+  clear_pxc_options(sst_options_group);
+  clear_pxc_options(galera_options_group);
+  clear_pxc_options(ssl_options_group);
+}
+
+// List of options that are used by galera
+const char* galera_socket_options[] = {
+  "ca",
+  "cert",
+  "key",
+  "cipher",
+  "compression",
+  "password_file",
+  0 // MUST end with 0!
+};
+
+static bool set_pxc_option(struct PxcEncryptTransitOption *options_group,
+                           const char *name, int name_len, const char *value)
+{
+  struct PxcEncryptTransitOption *current = options_group;
+
+  while (current->name)
+  {
+    if (strncmp(current->name, name, name_len) == 0)
+    {
+      free(current->value);
+      current->value= 0;
+      current->value = strdup(value);
+      return true;
+    }
+    current++;
+  }
+
+  return false;
+}
+
+static struct PxcEncryptTransitOption * get_pxc_option_from_group(
+  struct PxcEncryptTransitOption *options_group, const char *name)
+{
+  struct PxcEncryptTransitOption *current = options_group;
+
+  while (current->name)
+  {
+    if (strcmp(current->name, name) == 0)
+      return current;
+
+    current++;
+  }
+
+  return NULL;
+}
+
+static struct PxcEncryptTransitOption * get_pxc_option(const char *group, const char *name)
+{
+  struct PxcEncryptTransitOption* option = NULL;
+
+  // Check more specialized groups first
+  if (strcmp("galera", group) == 0)
+    option = get_pxc_option_from_group(galera_options_group, name);
+  else if (strcmp("sst", group) == 0)
+    option = get_pxc_option_from_group(sst_options_group, name);
+
+  // Check the default group if no value found
+  if (!option || !option->value)
+    option = get_pxc_option_from_group(ssl_options_group, name);
+
+  return option;
+}
+
+
+/*
+ * This is the callback from the options parsing code.
+*/
+int pxc_encrypt_transit_option_cb(void *ctx, const char *group_name, const char *option)
+{
+  // A NULL option is sent when a new group is encountered
+  if (!option)
+    return 0;
+
+  // Parse the string
+  const char* p;
+  const char* name;
+  int   name_len=0;
+  const char* value;
+
+  name = option;
+  if (strncmp(name, "--", 2) == 0)
+    name += 2;
+
+  if ((p = strchr(name, '=')))
+  {
+    name_len = p - name;
+    value = p+1;
+  }
+  else
+  {
+    name_len = strlen(name);
+    value = NullS;
+  }
+
+  struct PxcEncryptTransitOption *options_group = 0;
+
+  if (strcmp(group_name, "ssl") == 0)
+    options_group = ssl_options_group;
+  else if (strcmp(group_name, "galera") == 0)
+    options_group = galera_options_group;
+  else if (strcmp(group_name, "sst") == 0)
+    options_group = sst_options_group;
+  else
+  {
+    WSREP_WARN("Unknown option group in encrypt-transit configuration: %s", group_name);
+  }
+
+  if (options_group)
+    if (!set_pxc_option(options_group, name, name_len, value))
+    {
+      WSREP_WARN("Option '%s' does not belong to the group '%s'",
+        name, group_name);
+    }
+
+  return 0;
+}
+
+static void normalize_pxc_option_group(struct PxcEncryptTransitOption *options_group,
+                                       const char *dir_path)
+{
+  struct PxcEncryptTransitOption *option = options_group;
+
+  while (option->name)
+  {
+    if (!option->value || !option->value[0])
+    {
+      option++;
+      continue;
+    }
+
+    if (option->flags & 0x01)
+    {
+      char dir_name[FN_REFLEN];
+
+      if (strncmp(option->value, "/", 1) == 0)
+        my_stpncpy(dir_name, option->value, FN_REFLEN);
+      else
+        (void) strxnmov(dir_name, FN_REFLEN, dir_path, "/", option->value, NullS);
+
+      cleanup_dirname(dir_name, dir_name);
+
+      free(option->value);
+      option->value = NullS;
+      option->value = strdup(dir_name);
+    }
+    option++;
+  }
+}
+
+static bool verify_pxc_file_option(struct PxcEncryptTransitOption *option)
+{
+  if (!option)
+    return false;
+
+  MY_STAT   stat;
+
+  // Does the file exist?
+  if (!my_stat(option->value, &stat, MYF(0)))
+    return false;
+
+  // Is it a regular file?
+  if (!MY_S_ISREG(stat.st_mode))
+    return false;
+
+  return true;
+}
+
+/*
+ * This function prepares the SSL parameter infromation needed before
+ * starting up wsrep.  It will extract the SSL parameters, setup the .ssl
+ * directory, and setup the pxc_default_wsrep_provider_options variable,
+ * so that it can be prepended to the options parameter before calling
+ * wsrep_init.
+ *
+ * true is returned on success.
+ * false is returned on failure (error messages are logged with WSREP_ERROR).
+ * Because we are initializing the SSL setup, it is assumed that returning
+ * false here will cause system startup to abort.
+ */
+bool pxc_encrypt_transit_init()
+{
+  MY_STAT   stat;
+  char      result[FN_REFLEN];
+  char      real_path[FN_REFLEN];
+  size_t    real_path_len;
+  char *    config_dir= NULL;
+  int const cmd_len= 4096;
+  wsp::string cmd_str(cmd_len);
+  int       err= 0;
+  int       ret;
+
+  // Call pxc_encrypt_transit (this will return a path to the config directory)
+  ret= snprintf (cmd_str(), cmd_len,
+                 "wsrep_pxc_encrypt_transit "
+                 PXC_ENCRYPT_TRANSIT_OPT_PATH" '%s' "
+                 PXC_ENCRYPT_TRANSIT_OPT_PARENT" '%d' ",
+                 pxc_encrypt_transit_path,
+                 (int)getpid());
+  if (ret < 0 || ret >= cmd_len)
+  {
+    WSREP_ERROR("pxc-encrypt-transit: snprintf() failed: %d", ret);
+    return false;
+  }
+
+  wsp::process proc (cmd_str(), "r", NULL);
+  if (proc.error())
+    err = proc.error();
+  else
+  {
+    char* tmp= fgets (result, FN_REFLEN, proc.pipe());
+    if (!tmp)
+      err = ferror(proc.pipe());
+    proc.wait();
+  }
+
+  if (err)
+  {
+    char errbuf[MYSYS_STRERROR_SIZE];
+    WSREP_ERROR("pxc-encrypt-transit: Failed to execute: %s : %d (%s)", cmd_str(),
+      err, my_strerror(errbuf, sizeof(errbuf), err));
+    return false;
+  }
+
+  // Remove trailing '\n'
+  size_t len = strlen(result);
+  if (len > 0 && result[len - 1] == '\n') result[len - 1] = '\0';
+
+  // Parse the string
+  if (strncmp("success:", result, 8) == 0)
+  {
+    config_dir = result+8;
+  }
+  else
+  {
+    WSREP_ERROR("pxc-encrypt-transit: failed : %s",
+      (strncmp("error:", result, 6) == 0) ? result+6 : result);
+    return false;
+  }
+
+  // Validate the directory (check permissions and existence)
+
+  // Cleanup the path
+  real_path_len= cleanup_dirname(real_path, config_dir);
+  if (real_path_len > FN_REFLEN)
+  {
+    WSREP_ERROR("pxc-encrypt-transit: path is too long");
+    return false;
+  }
+
+  // Path must exist, If path does not exist, return an ERROR
+  // This is a security parameter, so if is not set correctly,
+  // return an error (do not revert to unsecure behavior).
+  if (my_stat(real_path, &stat, MYF(0)) == NULL)
+  {
+    WSREP_ERROR("pxc-encrypt-transit : path does not exist : %s",
+                real_path);
+    return false;
+  }
+
+  // Must be a directory
+  if (! MY_S_ISDIR(stat.st_mode))
+  {
+    WSREP_ERROR("pxc-encrypt-transit: configuration path is not a directory : %s",
+      real_path)
+    return false;
+  }
+
+  // Check the directory permissions first
+  if (stat.st_mode & (S_IROTH |  S_IWOTH | S_IXOTH))
+  {
+    // Warn of security hole, file is open to read or write by all
+    WSREP_ERROR("The SSL configuration directory is open to access by all users.");
+    return false;
+  }
+  //else if (stat.st_mode & (S_IRGRP | S_IWGRP | S_IXGRP))
+  //{
+  //  //$TODO (kennt) : implement
+  //  // Warn of possible security hole, file is read/write to group
+  //  WSREP_WARN("Possilble security violation");
+  //}
+
+  // We have the configuration directory, create a path
+  // for the ssl.cnf file.
+  (void) strxnmov(result, FN_REFLEN, real_path, "/ssl.cnf", NullS);
+  cleanup_dirname(result, result);
+
+  if (my_stat(result, &stat, MYF(0)) == NULL)
+  {
+    WSREP_ERROR("pxc-encrypt-transit: cannot find ssl.cnf : %s", result);
+    return false;
+  }
+
+  // Look in the directory for ssl.cnf file
+  // Should have:
+  //  [ssl]     # general config
+  //  [galera]  # galera intra-cluster options
+  //  [sst]     # sst options
+  //
+  int argc= 0;
+  /* load_defaults require argv[0] is not null */
+  char *name= (char *)"auto";
+  char **argv= &name;
+  uint args_used= 0;
+  err = my_search_option_files(result, &argc, &argv, &args_used,
+                               &pxc_encrypt_transit_option_cb,
+                               (void *) 0, NULL, FALSE, TRUE);
+  if (err)
+  {
+    char errbuf[MYSYS_STRERROR_SIZE];
+    WSREP_ERROR("Could not read in encrypt-transit configuration file: %s %d (%s)",
+                result, err, my_strerror(errbuf, sizeof(errbuf), err));
+    clear_all_pxc_options();
+    return false;
+  }
+
+  // Verify the values
+
+  // We must have a version option, only accept version = 1 for now
+  PxcEncryptTransitOption* option = get_pxc_option("ssl", "version");
+  if (!option)
+  {
+    WSREP_ERROR("pxc-encrypt-transit: missing version");
+    clear_all_pxc_options();
+    return false;
+  }
+  if (!option->value || strcmp(option->value, "1"))
+  {
+    WSREP_ERROR("pxc-encrypt-transit: unsupported version: %s", option->value ? option->value : "(version option not found)");
+    clear_all_pxc_options();
+    return false;
+  }
+
+  // Convert any relative paths to absolute paths
+  normalize_pxc_option_group(galera_options_group, real_path);
+  normalize_pxc_option_group(ssl_options_group, real_path);
+
+
+  // Check that we have the minimal required values (cert,ca,key)
+  const char * required_options[] = { "ca", "cert", "key", NullS };
+  const char ** required_option = required_options;
+  while (*required_option)
+  {
+    option = get_pxc_option("galera", *required_option);
+    if (!option->value)
+    {
+      WSREP_ERROR("pxc-encrypt-transit: cannot find the required option '%s'", *required_option);
+      clear_all_pxc_options();
+      return false;
+    }
+
+    if (!verify_pxc_file_option(option))
+    {
+      WSREP_ERROR("pxc-encrypt-transit: invalid value for option '%s' : %s",
+                  *required_option, option->value);
+      clear_all_pxc_options();
+      return false;
+    }
+    required_option++;
+  }
+
+  // Create the provider_options string
+  // Iterate through the list of options and retrieve the appropriate ones
+  char buffer[2048];
+  DYNAMIC_STRING dynstrOptions;
+
+  init_dynamic_string(&dynstrOptions, "", 256, 256);
+
+  const char ** galera_option = galera_socket_options;
+  while (*galera_option)
+  {
+    option = get_pxc_option("galera", *galera_option);
+    if (option)
+    {
+      snprintf(buffer, sizeof(buffer), "%s=%s;", option->param_name, option->value);
+      dynstr_append(&dynstrOptions, buffer);
+    }
+    galera_option++;
+  }
+
+  pxc_default_wsrep_provider_options = my_strdup(PSI_NOT_INSTRUMENTED,
+      dynstrOptions.str, MYF(MY_WME));
+
+  dynstr_free(&dynstrOptions);
+  clear_all_pxc_options();
+
+  if (!pxc_default_wsrep_provider_options)
+  {
+    WSREP_ERROR("pxc-encrypt-transit: failed to allocate string for default options");
+    return false;
+  }
+
+  WSREP_INFO("default wsrep_provider_options = '%s'", pxc_default_wsrep_provider_options);
+
+  return true;
 }
