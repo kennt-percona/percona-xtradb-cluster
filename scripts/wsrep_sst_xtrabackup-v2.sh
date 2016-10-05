@@ -1116,15 +1116,15 @@ then
         check_extra
 
         ttcmd="$tcmd"
+        # add encryption onto the head of the stream
         if [[ $encrypt -eq 1 ]]; then
-            if [[ -n $scomp ]]; then
-                tcmd=" \$ecmd | $scomp | $tcmd "
-            else
-                tcmd=" \$ecmd | $tcmd "
-            fi
-        elif [[ -n $scomp ]]; then
+            tcmd=" \$ecmd | $tcmd "
+        fi
+        # add compression onto the head of the stream
+        if [[ -n $scomp ]]; then
             tcmd=" $scomp | $tcmd "
         fi
+
 
         wsrep_log_info "Streaming GTID file before SST"
         echo "${WSREP_SST_OPT_GTID}" > "${XB_GTID_INFO_FILE_PATH}"
@@ -1168,14 +1168,14 @@ then
 
         wsrep_log_info "Streaming the backup to joiner at ${REMOTEIP} ${SST_PORT:-4444}"
 
-        # Add compression to the head of the stream (if specified)
-        if [[ -n $scomp ]]; then
-            tcmd="$scomp | $tcmd"
-        fi
-
-        # Add encryption to the head of the stream (if specified)
+        # add encryption onto the head of the stream
         if [[ $encrypt -eq 1 ]]; then
             tcmd=" \$ecmd | $tcmd "
+        fi
+
+        # add compression onto the head of the stream
+        if [[ -n $scomp ]]; then
+            tcmd=" $scomp | $tcmd "
         fi
 
         set +e
@@ -1202,13 +1202,12 @@ then
         echo "1" > "${DATA}/${IST_FILE}"
 
         get_keys
+        # add encryption onto the head of the stream
         if [[ $encrypt -eq 1 ]]; then
-            if [[ -n $scomp ]]; then
-                tcmd=" \$ecmd | $scomp | $tcmd "
-            else
-                tcmd=" \$ecmd | $tcmd "
-            fi
-        elif [[ -n $scomp ]]; then
+            tcmd=" \$ecmd | $tcmd "
+        fi
+        # add compression onto the head of the stream
+        if [[ -n $scomp ]]; then
             tcmd=" $scomp | $tcmd "
         fi
         strmcmd+=" \${IST_FILE}"
@@ -1233,7 +1232,6 @@ then
 
     stagemsg="Joiner-Recv"
 
-    sencrypted=1
     nthreads=1
 
     MODULE="xtrabackup_sst"
@@ -1264,14 +1262,11 @@ then
     fi
 
     get_keys
-    if [[ $encrypt -eq 1 && $sencrypted -eq 1 ]]; then
-        if [[ -n $sdecomp ]]; then
-            strmcmd=" $sdecomp | \$ecmd | $strmcmd"
-        else
-            strmcmd=" \$ecmd | $strmcmd"
-        fi
-    elif [[ -n $sdecomp ]]; then
-            strmcmd=" $sdecomp | $strmcmd"
+    if [[ -n $sdecomp ]]; then
+        strmcmd=" $sdecomp | $strmcmd"
+    fi
+    if [[ $encrypt -eq 1 ]]; then
+        strmcmd=" \$ecmd | $strmcmd"
     fi
 
     STATDIR=$(mktemp -d)
