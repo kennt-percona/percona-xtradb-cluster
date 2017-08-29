@@ -104,7 +104,7 @@ INSERT INTO t1 VALUES (6);
 #
 
 --connection node_3
-# We need a user with a n empty password for mysqldump SST
+# We need a user with an empty password for mysqldump SST
 # non-empty passwords will not work since there is already an empty 'password=' directive in the [client] section of my.cnf
 CREATE USER 'sst';
 GRANT ALL PRIVILEGES ON *.* TO 'sst';

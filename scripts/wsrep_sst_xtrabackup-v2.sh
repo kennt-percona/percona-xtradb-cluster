@@ -597,6 +597,8 @@ read_cnf()
         ssl_key=$(parse_cnf mysqld ssl-key "")
     fi
 
+    ssl_dhparams=$(parse_cnf sst ssl-dhparams "")
+
     pxc_encrypt_cluster_traffic=$(parse_cnf mysqld pxc-encrypt-cluster-traffic "")
     pxc_encrypt_cluster_traffic=$(normalize_boolean "$pxc_encrypt_cluster_traffic" "off")
 
