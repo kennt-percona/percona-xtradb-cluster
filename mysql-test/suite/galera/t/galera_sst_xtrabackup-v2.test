@@ -1,11 +1,24 @@
 --source include/big_test.inc
 --source include/galera_cluster.inc
 
+--connection node_2
+--let $before_server_uuid = `select @@server_uuid`
+--connection node_1
+
 --source suite/galera/include/galera_st_shutdown_slave.inc
 --source suite/galera/include/galera_st_clean_slave.inc
 
 --source suite/galera/include/galera_st_kill_slave.inc
 --source suite/galera/include/galera_st_kill_slave_ddl.inc
+
+# PXC-2518 : Test that the server_uuid does not change when
+# doing an SST (the auto.cnf file should be preserved)
+--connection node_2
+--let $assert_text = The server_uuid should not change because of an SST
+--let $assert_cond = @@server_uuid = "$before_server_uuid";
+--let $assert_debug = select "$before_server_uuid" AS "before", @@server_uuid AS "after";
+--source include/assert.inc
+--connection node_1
 
 --remove_file $MYSQL_TMP_DIR/galera_wsrep_recover.log
 

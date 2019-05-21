@@ -2168,6 +2168,13 @@ then
         wsrep_log_info "Proceeding with SST........."
 
         wsrep_log_debug "Cleaning the existing datadir and innodb-data/log directories"
+
+        # Save off the auto.cnf file (restore it after the SST)
+        auto_cnf_contents=""
+        if [[ -r "${DATA}/auto.cnf" ]]; then
+            auto_cnf_contents=$(cat "${DATA}/auto.cnf")
+        fi
+
         # Avoid emitting the find command output to log file. It just fill the
         # with ever increasing number of files and achieve nothing.
         find $ib_home_dir $ib_log_dir $ib_undo_dir $DATA -mindepth 1  -regex $cpat  -prune  -o -exec rm -rfv {} 1>/dev/null \+
@@ -2349,7 +2356,13 @@ then
         fi
 
         if [[ -r ${STATDIR}/wsrep_state.dat ]]; then
+            wsrep_log_debug "Moving wsrep_state.dat"
             mv "${STATDIR}/wsrep_state.dat" "${TDATA}"
+        fi
+
+        if [[ -n $auto_cnf_contents ]]; then
+            wsrep_log_debug "Restoring auto.cnf"
+            echo "$auto_cnf_contents" > "${TDATA}/auto.cnf"
         fi
 
         wsrep_log_debug "Move successful, removing ${DATA}"
