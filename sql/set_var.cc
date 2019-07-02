@@ -657,6 +657,10 @@ int sql_set_variables(THD *thd, List<set_var_base> *var_list, bool free_joins)
 {
   int error;
   List_iterator_fast<set_var_base> it(*var_list);
+#ifdef WITH_WSREP
+  bool has_global= false;
+#endif /* WITH_WSREP */
+
   DBUG_ENTER("sql_set_variables");
 
   set_var_base *var;
@@ -665,6 +669,25 @@ int sql_set_variables(THD *thd, List<set_var_base> *var_list, bool free_joins)
     if ((error= var->check(thd)))
       goto err;
   }
+
+#ifdef WITH_WSREP
+  /**
+    PXC-2560 : Check to see if any of the variables being SET are
+    global variables.  If they are global, perform a SYNC WAIT
+    (only if the SHOW STATUS SYNC WAIT is set).
+  */
+  it.rewind();
+  while ((var=it++))
+  {
+    String str;
+    var->print(thd, &str);
+    has_global = has_global || (strcmp(str.c_ptr_safe(), "GLOBAL ") == 0);
+  }
+
+  if (has_global)
+    WSREP_SYNC_WAIT(thd, WSREP_SYNC_WAIT_BEFORE_SHOW);
+#endif /* WITH_wSREP */
+
   if (!(error= MY_TEST(thd->is_error())))
   {
     it.rewind();
@@ -672,6 +695,9 @@ int sql_set_variables(THD *thd, List<set_var_base> *var_list, bool free_joins)
       error|= var->update(thd);         // Returns 0, -1 or 1
   }
 
+#ifdef WITH_WSREP
+error:
+#endif /* WITH_WSREP */
 err:
   if (free_joins)
     free_underlaid_joins(thd, thd->lex->select_lex);
