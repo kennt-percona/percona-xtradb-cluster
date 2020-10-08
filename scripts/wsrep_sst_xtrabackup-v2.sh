@@ -513,6 +513,18 @@ get_transfer()
         fi
 
         if [[ $encrypt -eq 4 ]]; then
+            wsrep_log_debug "Using openssl based encryption with socat: with key, crt, and ca"
+
+            pushd "$DATA" &>/dev/null
+            ssl_ca=$(get_absolute_path "$ssl_ca")
+            ssl_cert=$(get_absolute_path "$ssl_cert")
+            ssl_key=$(get_absolute_path "$ssl_key")
+            popd &>/dev/null
+
+            wsrep_log_debug "ssl_ca (absolute) : $ssl_ca"
+            wsrep_log_debug "ssl_cert (absolute) : $ssl_cert"
+            wsrep_log_debug "ssl_key (absolute) : $ssl_key"
+
             verify_file_exists "$ssl_ca" "CA, certificate, and key files are required." \
                                          "Please check the 'ssl-ca' option.           "
             verify_file_exists "$ssl_cert" "CA, certificate, and key files are required." \
