@@ -557,14 +557,14 @@ fi
 
     # NORMAL TARBALL
     cd "$TARGETDIR/usr/local/$PRODUCT_FULL_NAME"
-    link
+    #link
 
     # MIN TARBALL
     cd "$TARGETDIR/usr/local/minimal/$PRODUCT_FULL_NAME-minimal"
     rm -rf mysql-test 2> /dev/null
     rm -rf percona-xtradb-cluster-tests 2> /dev/null
-    find . -type f -exec file '{}' \; | grep ': ELF ' | cut -d':' -f1 | xargs strip --strip-unneeded
-    link
+    #find . -type f -exec file '{}' \; | grep ': ELF ' | cut -d':' -f1 | xargs strip --strip-unneeded
+    #link
 )
 
 # Package the archive
