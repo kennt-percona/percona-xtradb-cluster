@@ -1589,33 +1589,38 @@ then
         fi
 
 
-        if  [[ -n "$WSREP_SST_OPT_BINLOG" && -n "$DONOR_BINLOGNAME" ]]; then
+        # Only move the binlogs for versions of PXB < 2.4.24
+        # PXB 2.4.24+ moves the binlog files itself correctly
+        # (so we don't need to do it ourselves anymore)
+        if ! check_for_version $XB_VERSION "2.4.24"; then
+            if  [[ -n "$WSREP_SST_OPT_BINLOG" && -n "$DONOR_BINLOGNAME" ]]; then
 
-            binlog_dir=$(dirname "$WSREP_SST_OPT_BINLOG")
-            binlog_file=$(basename "$WSREP_SST_OPT_BINLOG")
-            donor_binlog_file=$DONOR_BINLOGNAME
+                binlog_dir=$(dirname "$WSREP_SST_OPT_BINLOG")
+                binlog_file=$(basename "$WSREP_SST_OPT_BINLOG")
+                donor_binlog_file=$DONOR_BINLOGNAME
 
-            # rename the donor binlog to the name of the binlogs on the joiner
-            if [[ "$binlog_file" != "$donor_binlog_file" ]]; then
-                pushd "$DATA" &>/dev/null
-                for f in $donor_binlog_file.*; do
-                    if [[ ! -e "$f" ]]; then continue; fi
-                    f_new=$(echo $f | sed "s/$donor_binlog_file/$binlog_file/")
-                    mv "$f" "$f_new" 2>/dev/null || true
+                # rename the donor binlog to the name of the binlogs on the joiner
+                if [[ "$binlog_file" != "$donor_binlog_file" ]]; then
+                    pushd "$DATA" &>/dev/null
+                    for f in $donor_binlog_file.*; do
+                        if [[ ! -e "$f" ]]; then continue; fi
+                        f_new=$(echo $f | sed "s/$donor_binlog_file/$binlog_file/")
+                        mv "$f" "$f_new" 2>/dev/null || true
+                    done
+                    popd &> /dev/null
+                fi
+
+                # To avoid comparing data directory and BINLOG_DIRNAME 
+                mv $DATA/${binlog_file}.* "$binlog_dir"/ 2>/dev/null || true
+
+                pushd "$binlog_dir" &>/dev/null
+                for bfiles in $binlog_file.*; do
+                    if [[ ! -e "$bfiles" ]]; then continue; fi
+                    echo ${binlog_dir}/${bfiles} >> ${binlog_file}.index
                 done
                 popd &> /dev/null
+
             fi
-
-            # To avoid comparing data directory and BINLOG_DIRNAME 
-            mv $DATA/${binlog_file}.* "$binlog_dir"/ 2>/dev/null || true
-
-            pushd "$binlog_dir" &>/dev/null
-            for bfiles in $binlog_file.*; do
-                if [[ ! -e "$bfiles" ]]; then continue; fi
-                echo ${binlog_dir}/${bfiles} >> ${binlog_file}.index
-            done
-            popd &> /dev/null
-
         fi
 
 
